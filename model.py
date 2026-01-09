@@ -1,6 +1,5 @@
 """
 Qwen3 模型核心实现 (仅文本部分)
-使用 GPU 版 PyTorch 实现 Transformer 推理，手动实现核心计算逻辑
 """
 import torch
 import numpy as np
@@ -35,7 +34,7 @@ class RMSNorm:
         # 确保x是float类型进行计算
         x_float = x.float()
         
-        # 计算方差 (沿最后一个维度) - 手动实现而不是使用torch.rms_norm
+        # 计算方差 (沿最后一个维度) 
         variance = torch.mean(x_float**2, dim=-1, keepdim=True)  # torch.mean: 计算张量的平均值，dim=-1表示沿最后一个维度计算
         # 归一化
         hidden_states = x_float * (1.0 / torch.sqrt(variance + self.eps))  # torch.sqrt: 计算张量元素的平方根
