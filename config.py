@@ -1,28 +1,10 @@
 """
 模型配置加载器
-从 config.json 加载 Qwen3-VL 模型配置
+从 config.json 加载 Qwen3 模型配置 (仅文本部分)
 """
 import json
 from dataclasses import dataclass
-from typing import List, Optional
-
-@dataclass
-class VisionConfig:
-    """视觉编码器配置"""
-    depth: int                    # 视觉编码器层数
-    hidden_act: str               # 激活函数
-    hidden_size: int              # 隐藏层维度
-    in_channels: int              # 输入通道数
-    initializer_range: float      # 初始化范围
-    intermediate_size: int        # 前馈网络中间层维度
-    model_type: str               # 模型类型
-    num_heads: int                # 注意力头数
-    num_position_embeddings: int  # 位置嵌入数量
-    out_hidden_size: int          # 输出隐藏层维度
-    patch_size: int               # 图像块大小
-    spatial_merge_size: int       # 空间合并大小
-    temporal_patch_size: int      # 时间维度块大小
-    deepstack_visual_indexes: Optional[List[int]] = None  # 深度堆叠视觉索引
+from typing import Optional
 
 @dataclass
 class TextConfig:
@@ -50,7 +32,7 @@ class TextConfig:
     vocab_size: int               # 词表大小
 
 class QwenConfig:
-    """Qwen3-VL 模型配置类"""
+    """Qwen3 模型配置类 (仅文本部分)"""
     
     def __init__(self, config_path):
         """
@@ -64,12 +46,7 @@ class QwenConfig:
         
         # 顶层配置
         self.architectures = self.config.get("architectures", [])
-        self.image_token_id = self.config.get("image_token_id")
         self.model_type = self.config.get("model_type")
-        self.video_token_id = self.config.get("video_token_id")
-        self.vision_start_token_id = self.config.get("vision_start_token_id")
-        self.vision_end_token_id = self.config.get("vision_end_token_id")
 
-        # 子配置
+        # 文本配置
         self.text_config = TextConfig(**self.config.get("text_config", {}))
-        self.vision_config = VisionConfig(**self.config.get("vision_config", {}))

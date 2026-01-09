@@ -1,7 +1,6 @@
 """
 权重加载工具
-从 SafeTensors 文件加载模型权重
-使用 PyTorch 加载以支持 BFloat16，然后转换为指定精度
+从 SafeTensors 文件加载模型权重 (仅加载文本模型部分)
 """
 import torch
 from safetensors import safe_open
@@ -10,6 +9,7 @@ import os
 def load_and_convert_weights(model_path, device="cuda", dtype=torch.bfloat16):
     """
     从 .safetensors 文件加载权重到 PyTorch Tensor
+    仅加载 language_model 部分，跳过视觉编码器权重
     
     参数:
         model_path: 模型文件夹路径，包含 .safetensors 文件
@@ -29,12 +29,13 @@ def load_and_convert_weights(model_path, device="cuda", dtype=torch.bfloat16):
     for file in files:
         path = os.path.join(model_path, file)
         print(f"正在处理 {file}...")
-        # 使用 PyTorch 框架加载，直接支持 bfloat16
         with safe_open(path, framework="pt", device="cpu") as f:
             for key in f.keys():
+                # 只加载 language_model 部分，跳过 visual 相关权重
+                if "visual" in key:
+                    continue
                 tensor = f.get_tensor(key)
-                # 转换到目标设备和数据类型
                 weights[key] = tensor.to(device=device, dtype=dtype)
-                        
+                         
     print(f"共加载 {len(weights)} 个张量到 {device}。")
     return weights

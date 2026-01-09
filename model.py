@@ -1,6 +1,6 @@
 """
-Qwen3-VL 模型核心实现
-使用GPU版PyTorch实现Transformer推理，但尽可能避免使用torch内置的高级计算函数
+Qwen3 模型核心实现 (仅文本部分)
+使用 GPU 版 PyTorch 实现 Transformer 推理，手动实现核心计算逻辑
 """
 import torch
 import numpy as np
@@ -68,14 +68,14 @@ def precompute_freqs_cis(dim: int, end: int, theta: float = 10000.0, device='cpu
 
 class MRoPE:
     """
-    多模态旋转位置编码 (Multimodal Rotary Position Embedding)
+    M-RoPE 旋转位置编码
     
-    Qwen3-VL 使用 M-RoPE，将 head_dim 分成三段:
-    - Time (T): 时间/序列维度
-    - Height (H): 图像高度维度
-    - Width (W): 图像宽度维度
+    将 head_dim 分成三段，每段独立计算位置编码:
+    - 段 1: 序列位置 (使用实际 position_ids)
+    - 段 2: 固定位置 0
+    - 段 3: 固定位置 0
     
-    对于纯文本推理，H 和 W 使用位置 0
+    这种分段方式来自 Qwen 模型架构设计
     """
     def __init__(self, config, device='cpu'):
         """
@@ -94,15 +94,15 @@ class MRoPE:
         # 预计算各段的频率张量
         MAX_POS = 8192  # 最大位置，足够大多数场景
         
-        # 段 1: 时间维度 (传统 RoPE 部分)
+        # 段 1: 序列位置 (主要位置编码)
         dim_t = self.mrope_section[0] * 2
         self.cos_t, self.sin_t = precompute_freqs_cis(dim_t, MAX_POS, self.rope_theta, device)
         
-        # 段 2: 高度维度 (视觉用)
+        # 段 2: 固定位置 0
         dim_h = self.mrope_section[1] * 2
         self.cos_h, self.sin_h = precompute_freqs_cis(dim_h, MAX_POS, self.rope_theta, device)
 
-        # 段 3: 宽度维度 (视觉用)
+        # 段 3: 固定位置 0
         dim_w = self.mrope_section[2] * 2
         self.cos_w, self.sin_w = precompute_freqs_cis(dim_w, MAX_POS, self.rope_theta, device)
         
@@ -125,12 +125,12 @@ class MRoPE:
         cos_t = self.cos_t[indices]  # [seq_len, 24]
         sin_t = self.sin_t[indices]
         
-        # 段 H 和 W: 对于纯文本，使用位置 0
-        zeros = torch.zeros_like(indices)  # torch.zeros_like: 创建与输入张量形状相同的零张量
-        cos_h = self.cos_h[zeros]  # [seq_len, 20]
+        # 段 2 和 3: 使用固定位置 0
+        zeros = torch.zeros_like(indices)
+        cos_h = self.cos_h[zeros]
         sin_h = self.sin_h[zeros]
         
-        cos_w = self.cos_w[zeros]  # [seq_len, 20]
+        cos_w = self.cos_w[zeros]
         sin_w = self.sin_w[zeros]
         
         # 拼接得到完整的 [seq_len, 64] (24+20+20 = 64 对)
