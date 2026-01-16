@@ -206,18 +206,176 @@ class Attention:
         self.q_norm = None
         self.k_norm = None
 
+    # ============================================================================
+    # 三种注意力机制实现:
+    # 1. MHA (Multi-Head Attention): Q, K, V 都有 num_heads 个头
+    # 2. MQA (Multi-Query Attention): Q 有 num_heads 个头, K 和 V 只有 1 个头  
+    # 3. GQA (Grouped Query Attention): Q 有 num_heads 个头, K 和 V 有 num_kv_heads 个头
+    # 
+    # 当前运行: GQA
+    # ============================================================================
+    
+    # def forward_mha(self, x, cos, sin, mask=None, kv_cache=None):
+    #     """
+    #     Multi-Head Attention (MHA) 前向计算
+    #     所有投影都使用 num_heads 个头,K 和 V 完全独立
+    #     
+    #     参数:
+    #         x: 输入张量,形状 [batch, seq_len, hidden_size]
+    #         cos, sin: 旋转位置编码
+    #         mask: 注意力掩码,形状 [1, 1, seq_len, seq_len]
+    #         kv_cache: KV 缓存列表
+    #         
+    #     返回:
+    #         输出张量,形状 [batch, seq_len, hidden_size]
+    #     """
+    #     b, s, _ = x.shape
+    #     
+    #     # QKV 投影
+    #     q = torch.matmul(x, self.q_proj.T)  # [b, s, num_heads * head_dim]
+    #     k = torch.matmul(x, self.k_proj.T)  # [b, s, num_heads * head_dim]
+    #     v = torch.matmul(x, self.v_proj.T)  # [b, s, num_heads * head_dim]
+    #     
+    #     # 重塑为多头形式 - MHA: K 和 V 也使用 num_heads
+    #     q = q.reshape(b, s, self.num_heads, self.head_dim)
+    #     k = k.reshape(b, s, self.num_heads, self.head_dim)  # 注意: 使用 num_heads 而非 num_kv_heads
+    #     v = v.reshape(b, s, self.num_heads, self.head_dim)  # 注意: 使用 num_heads 而非 num_kv_heads
+    #     
+    #     # QK Norm (Qwen3 特有)
+    #     if self.q_norm is not None:
+    #         q = self.q_norm(q)
+    #     if self.k_norm is not None:
+    #         k = self.k_norm(k)
+    #     
+    #     # 应用旋转位置编码
+    #     q, k = apply_rotary_pos_emb(q, k, cos, sin)
+    #     
+    #     # 更新 KV 缓存
+    #     if kv_cache is not None:
+    #         k_cache, v_cache = kv_cache[self.layer_idx]
+    #         if k_cache is not None:
+    #             k = torch.cat([k_cache, k], dim=1)
+    #             v = torch.cat([v_cache, v], dim=1)
+    #         kv_cache[self.layer_idx] = (k, v)
+    #     
+    #     # MHA: 无需复制 K 和 V,因为它们已经有 num_heads 个头
+    #     # 直接转置即可
+    #     q = q.transpose(1, 2)  # [b, num_heads, seq_len, head_dim]
+    #     k = k.transpose(1, 2)  # [b, num_heads, seq_len, head_dim]
+    #     v = v.transpose(1, 2)  # [b, num_heads, seq_len, head_dim]
+    #     
+    #     # 计算注意力分数
+    #     att = torch.matmul(q, k.transpose(-2, -1)) * self.scale
+    #     
+    #     # 应用掩码
+    #     if mask is not None:
+    #         att = att + mask
+    #     
+    #     # Softmax
+    #     att_float = att.float()
+    #     att_max = torch.max(att_float, dim=-1, keepdim=True)[0]
+    #     att_exp = torch.exp(att_float - att_max)
+    #     att_weights = att_exp / torch.sum(att_exp, dim=-1, keepdim=True)
+    #     att_weights = att_weights.to(v.dtype)
+    #     
+    #     # 加权求和
+    #     out = torch.matmul(att_weights, v)
+    #     
+    #     # 合并多头
+    #     out = out.transpose(1, 2).reshape(b, s, self.num_heads * self.head_dim)
+    #     
+    #     # 输出投影
+    #     return torch.matmul(out, self.o_proj.T)
+    
+    # def forward_mqa(self, x, cos, sin, mask=None, kv_cache=None):
+    #     """
+    #     Multi-Query Attention (MQA) 前向计算
+    #     Q 有 num_heads 个头,K 和 V 只有 1 个头,需要广播到所有查询头上
+    #     
+    #     参数:
+    #         x: 输入张量,形状 [batch, seq_len, hidden_size]
+    #         cos, sin: 旋转位置编码
+    #         mask: 注意力掩码,形状 [1, 1, seq_len, seq_len]
+    #         kv_cache: KV 缓存列表
+    #         
+    #     返回:
+    #         输出张量,形状 [batch, seq_len, hidden_size]
+    #     """
+    #     b, s, _ = x.shape
+    #     
+    #     # QKV 投影
+    #     q = torch.matmul(x, self.q_proj.T)  # [b, s, num_heads * head_dim]
+    #     k = torch.matmul(x, self.k_proj.T)  # [b, s, 1 * head_dim]
+    #     v = torch.matmul(x, self.v_proj.T)  # [b, s, 1 * head_dim]
+    #     
+    #     # 重塑为多头形式 - MQA: K 和 V 只有 1 个头
+    #     q = q.reshape(b, s, self.num_heads, self.head_dim)
+    #     k = k.reshape(b, s, 1, self.head_dim)  # 只有 1 个头
+    #     v = v.reshape(b, s, 1, self.head_dim)  # 只有 1 个头
+    #     
+    #     # QK Norm (Qwen3 特有)
+    #     if self.q_norm is not None:
+    #         q = self.q_norm(q)
+    #     if self.k_norm is not None:
+    #         k = self.k_norm(k)
+    #     
+    #     # 应用旋转位置编码
+    #     q, k = apply_rotary_pos_emb(q, k, cos, sin)
+    #     
+    #     # 更新 KV 缓存
+    #     if kv_cache is not None:
+    #         k_cache, v_cache = kv_cache[self.layer_idx]
+    #         if k_cache is not None:
+    #             k = torch.cat([k_cache, k], dim=1)
+    #             v = torch.cat([v_cache, v], dim=1)
+    #         kv_cache[self.layer_idx] = (k, v)
+    #     
+    #     # MQA: 将单个 K 和 V 头复制到所有查询头
+    #     # k: [b, seq, 1, head_dim] -> [b, seq, num_heads, head_dim]
+    #     k = torch.repeat_interleave(k, self.num_heads, dim=2)
+    #     v = torch.repeat_interleave(v, self.num_heads, dim=2)
+    #     
+    #     # 转置以计算注意力
+    #     q = q.transpose(1, 2)  # [b, num_heads, seq_len, head_dim]
+    #     k = k.transpose(1, 2)  # [b, num_heads, seq_len, head_dim]
+    #     v = v.transpose(1, 2)  # [b, num_heads, seq_len, head_dim]
+    #     
+    #     # 计算注意力分数
+    #     att = torch.matmul(q, k.transpose(-2, -1)) * self.scale
+    #     
+    #     # 应用掩码
+    #     if mask is not None:
+    #         att = att + mask
+    #     
+    #     # Softmax
+    #     att_float = att.float()
+    #     att_max = torch.max(att_float, dim=-1, keepdim=True)[0]
+    #     att_exp = torch.exp(att_float - att_max)
+    #     att_weights = att_exp / torch.sum(att_exp, dim=-1, keepdim=True)
+    #     att_weights = att_weights.to(v.dtype)
+    #     
+    #     # 加权求和
+    #     out = torch.matmul(att_weights, v)
+    #     
+    #     # 合并多头
+    #     out = out.transpose(1, 2).reshape(b, s, self.num_heads * self.head_dim)
+    #     
+    #     # 输出投影
+    #     return torch.matmul(out, self.o_proj.T)
+    
     def forward(self, x, cos, sin, mask=None, kv_cache=None):
         """
-        注意力前向计算
+        Grouped Query Attention (GQA) 前向计算 - 当前运行的版本
+        Q 有 num_heads 个头,K 和 V 有 num_kv_heads 个头 (介于 MHA 和 MQA 之间)
         
         参数:
-            x: 输入张量，形状 [batch, seq_len, hidden_size]
+            x: 输入张量,形状 [batch, seq_len, hidden_size]
             cos, sin: 旋转位置编码
-            mask: 注意力掩码，形状 [1, 1, seq_len, seq_len]
+            mask: 注意力掩码,形状 [1, 1, seq_len, seq_len]
             kv_cache: KV 缓存列表
             
         返回:
-            输出张量，形状 [batch, seq_len, hidden_size]
+            输出张量,形状 [batch, seq_len, hidden_size]
         """
         b, s, _ = x.shape
         
@@ -280,6 +438,9 @@ class Attention:
         att_exp = torch.exp(att_float - att_max)
         att_weights = att_exp / torch.sum(att_exp, dim=-1, keepdim=True)
         att_weights = att_weights.to(v.dtype)  # 转换回原始类型
+
+        # 推荐写法
+        #att_weights = torch.softmax(att.float(), dim=-1).to(v.dtype)
         
         # 加权求和
         # att @ v -> [b, heads, s_q, head_dim]
@@ -287,7 +448,7 @@ class Attention:
         
         # 合并多头
         # Qwen3-VL 特殊: num_heads * head_dim (4096) != hidden_size (2560)
-        # 所以需要 reshape 到 [b, s, num_heads * head_dim]，然后由 o_proj 投影回 hidden_size
+        # 所以需要 reshape 到 [b, s, num_heads * head_dim],然后由 o_proj 投影回 hidden_size
         out = out.transpose(1, 2).reshape(b, s, self.num_heads * self.head_dim)
         
         # 输出投影: [b, s, num_heads * head_dim] @ [hidden_size, num_heads * head_dim]^T -> [b, s, hidden_size]
@@ -517,3 +678,5 @@ class Qwen3VLForConditionalGeneration:
         logits = torch.matmul(x, self.lm_head.T)  # torch.matmul: 执行矩阵乘法
         
         return logits
+
+        
