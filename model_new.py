@@ -437,10 +437,17 @@ class Qwen3VLForConditionalGeneration(nn.Module):
         for i, layer in enumerate(self.layers):
             prefix = f"model.language_model.layers.{i}"
             
-            # 辅助：按需加载（有些模型版本没有 bias，直接跳过即可）
+            # 辅助：按需加载
+            # - key 存在：copy_ 真实权重
+            # - key 不存在（如此模型没有 bias）：zero_ 置零
+            #   ⚠ 必须置零，否则 skip_init 留下的随机垃圾值会污染每次 Linear 计算！
             def _copy(dst_tensor, key):
+                if dst_tensor is None:
+                    return
                 if key in weights:
                     dst_tensor.copy_(weights[key])
+                else:
+                    dst_tensor.zero_()
 
             # 注意力部分
             layer.attn.q_proj.weight.copy_(weights[f"{prefix}.self_attn.q_proj.weight"])
