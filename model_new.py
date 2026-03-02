@@ -426,13 +426,18 @@ class Qwen3VLForConditionalGeneration(nn.Module):
         for i, layer in enumerate(self.layers):
             prefix = f"model.language_model.layers.{i}"
             
+            # 辅助：按需加载（有些模型版本没有 bias，直接跳过即可）
+            def _copy(dst_tensor, key):
+                if key in weights:
+                    dst_tensor.copy_(weights[key])
+
             # 注意力部分
             layer.attn.q_proj.weight.copy_(weights[f"{prefix}.self_attn.q_proj.weight"])
-            layer.attn.q_proj.bias.copy_(weights[f"{prefix}.self_attn.q_proj.bias"])
+            _copy(layer.attn.q_proj.bias, f"{prefix}.self_attn.q_proj.bias")
             layer.attn.k_proj.weight.copy_(weights[f"{prefix}.self_attn.k_proj.weight"])
-            layer.attn.k_proj.bias.copy_(weights[f"{prefix}.self_attn.k_proj.bias"])
+            _copy(layer.attn.k_proj.bias, f"{prefix}.self_attn.k_proj.bias")
             layer.attn.v_proj.weight.copy_(weights[f"{prefix}.self_attn.v_proj.weight"])
-            layer.attn.v_proj.bias.copy_(weights[f"{prefix}.self_attn.v_proj.bias"])
+            _copy(layer.attn.v_proj.bias, f"{prefix}.self_attn.v_proj.bias")
             layer.attn.o_proj.weight.copy_(weights[f"{prefix}.self_attn.o_proj.weight"])
             
             layer.attn.q_norm.weight.copy_(weights[f"{prefix}.self_attn.q_norm.weight"])
