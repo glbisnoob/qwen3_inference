@@ -5,6 +5,7 @@ Qwen3-VL 模型工程化实现 (model_new.py)
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.nn.utils import skip_init   # 延迟初始化，避免显存翻倍
 from typing import Optional, Tuple, List
 
 # =============================================================================
@@ -154,7 +155,7 @@ class MoEMLP(nn.Module):
         
         # 1. 路由器 (Router / Gate)：
         # 一个非常简单的线性层，将隐状态映射为分配给各个专家的“意愿得分”
-        self.router = nn.Linear(self.hidden_size, self.num_experts, bias=False)
+        self.router = skip_init(nn.Linear, self.hidden_size, self.num_experts, bias=False)
         
         # 2. 专家网络列表 (Experts)：
         # 这里复用了刚刚讲过的 SwiGLUMLP，将 8 个完整的 MLP 平行摆放
@@ -214,10 +215,10 @@ class SwiGLUMLP(nn.Module):
         hidden_size = config.text_config.hidden_size
         intermediate_size = config.text_config.intermediate_size
         
-        # 门控分支、上投影分支、下投影分支
-        self.gate_proj = nn.Linear(hidden_size, intermediate_size, bias=False)
-        self.up_proj = nn.Linear(hidden_size, intermediate_size, bias=False)
-        self.down_proj = nn.Linear(intermediate_size, hidden_size, bias=False)
+        # 同样使用 skip_init，避免随机初始化浪费显存
+        self.gate_proj = skip_init(nn.Linear, hidden_size, intermediate_size, bias=False)
+        self.up_proj   = skip_init(nn.Linear, hidden_size, intermediate_size, bias=False)
+        self.down_proj  = skip_init(nn.Linear, intermediate_size, hidden_size, bias=False)
 
     def forward(self, x):
         # F.silu: 即 x * sigmoid(x)，PyTorch 内置优化版本
@@ -237,11 +238,12 @@ class Qwen3Attention(nn.Module):
         self.head_dim = config.text_config.head_dim
         self.scale = self.head_dim ** -0.5
 
-        # 标准线性投影层
-        self.q_proj = nn.Linear(self.hidden_size, self.num_heads * self.head_dim, bias=True)
-        self.k_proj = nn.Linear(self.hidden_size, self.num_kv_heads * self.head_dim, bias=True)
-        self.v_proj = nn.Linear(self.hidden_size, self.num_kv_heads * self.head_dim, bias=True)
-        self.o_proj = nn.Linear(self.num_heads * self.head_dim, self.hidden_size, bias=False)
+        # skip_init: 创建 nn.Linear 但跳过随机权重初始化，只占内存布局
+        # 避免 __init__ 时分配一次随机权重 + load_weights 时再 copy_ 一次导致显存翻倍
+        self.q_proj = skip_init(nn.Linear, self.hidden_size, self.num_heads * self.head_dim, bias=True)
+        self.k_proj = skip_init(nn.Linear, self.hidden_size, self.num_kv_heads * self.head_dim, bias=True)
+        self.v_proj = skip_init(nn.Linear, self.hidden_size, self.num_kv_heads * self.head_dim, bias=True)
+        self.o_proj = skip_init(nn.Linear, self.num_heads * self.head_dim, self.hidden_size, bias=False)
 
         # QK Norm：在 Q/K reshape 成多头后，对每个头的 head_dim 维度单独做归一化
         # 所以 dim 应该是 head_dim，而非 num_heads * head_dim
@@ -337,11 +339,12 @@ class Qwen3VLForConditionalGeneration(nn.Module):
         self.device = device
         text_config = config.text_config
         
-        # 1. 基础组件
-        self.embed_tokens = nn.Embedding(text_config.vocab_size, text_config.hidden_size)
+        # skip_init 延迟初始化：不分配随机权重，只占内存布局
+        # 对于几十亿参数的大模型，这可以节省一半的显存峰值
+        self.embed_tokens = skip_init(nn.Embedding, text_config.vocab_size, text_config.hidden_size)
         self.layers = nn.ModuleList([Qwen3Block(config, i) for i in range(text_config.num_hidden_layers)])
         self.norm = RMSNorm(text_config.hidden_size, eps=text_config.rms_norm_eps)
-        self.lm_head = nn.Linear(text_config.hidden_size, text_config.vocab_size, bias=False)
+        self.lm_head = skip_init(nn.Linear, text_config.hidden_size, text_config.vocab_size, bias=False)
         
         # 2. 位置编码器 (M-RoPE: 多模态旋转位置编码)
         self.mrope = MRoPE(config, device)
