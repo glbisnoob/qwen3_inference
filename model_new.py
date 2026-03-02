@@ -72,6 +72,17 @@ class MRoPE:
         返回:
             (cos, sin): 形状均为 [1, seq_len, 1, head_dim//2]
         """
+        # MRoPE 不是 nn.Module，cos/sin 查找表不会随 model.to(device) 自动迁移。
+        # 这里手动将查找表移到与 position_ids 相同的设备上（首次调用有少量开销，之后不再搬运）。
+        dev = position_ids.device
+        if self.cos_t.device != dev:
+            self.cos_t = self.cos_t.to(dev)
+            self.sin_t = self.sin_t.to(dev)
+            self.cos_h = self.cos_h.to(dev)
+            self.sin_h = self.sin_h.to(dev)
+            self.cos_w = self.cos_w.to(dev)
+            self.sin_w = self.sin_w.to(dev)
+
         indices = position_ids[0]          # 简化: batch=1, shape [seq_len]
         zeros   = torch.zeros_like(indices)
 
