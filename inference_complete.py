@@ -57,15 +57,22 @@ def main():
 
     tokenizer = AutoTokenizer.from_pretrained(args.model_path, trust_remote_code=True)
 
-    weights = load_and_convert_weights(args.model_path, device=device)
-    model = Qwen3VLForConditionalGeneration(config, device=device)
-    model.to(device) 
+    # -------- 正确的显存控制顺序 --------
+    # 1. 权重先加载到 CPU（不占 GPU 显存）
+    weights = load_and_convert_weights(args.model_path, device="cpu")
     
+    # 2. 模型结构初始化（skip_init，不分配随机权重）
+    model = Qwen3VLForConditionalGeneration(config, device="cpu")
+    
+    # 3. 把空结构从 CPU 搬到目标 GPU（此时 GPU 几乎不用额外显存，因为 skip_init 的内容未初始化）
+    model.to(device)
+    
+    # 4. copy_ 把 CPU 上的权重逐层拷进 GPU 上的模型（跨设备 copy_ PyTorch 原生支持）
     model.load_from_weight_dict(weights)
     
+    # 5. 释放 CPU 上的权重字典，避免白占内存
     del weights
     import gc; gc.collect()
-    torch.cuda.empty_cache() if torch.cuda.is_available() else None
 
     model.eval()
     
